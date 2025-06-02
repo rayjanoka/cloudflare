@@ -181,10 +181,12 @@ func (r cfDNSRecord) libdnsRecord(zone string) (libdns.Record, error) {
 			Target:    r.Data.Target,
 		}, nil
 	case "TXT":
+		// unwrap the quotes from the content
+		unwrappedContent := unwrapContent(r.Content)
 		return libdns.TXT{
 			Name: name,
 			TTL:  ttl,
-			Text: strings.TrimPrefix(strings.TrimSuffix(r.Content, `"`), `"`),
+			Text: unwrappedContent,
 		}, nil
 	// NOTE: HTTPS records from Cloudflare have a `r.Content` that can be
 	// parsed by [libdns.RR.Parse] so that is what we do here. While we are
@@ -226,9 +228,8 @@ func cloudflareRecord(r libdns.Record) (cfDNSRecord, error) {
 	}
 	switch rec := r.(type) {
 	case libdns.TXT:
-		if !(strings.HasPrefix(cfRec.Content, `"`) && strings.HasSuffix(cfRec.Content, `"`)) {
-			cfRec.Content = fmt.Sprintf(`"%s"`, cfRec.Content)
-		}
+		// wrap the content in quotes
+		cfRec.Content = wrapContent(cfRec.Content)
 	case libdns.SRV:
 		cfRec.Data.Service = "_" + rec.Service
 		cfRec.Data.Priority = rec.Priority

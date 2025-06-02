@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/libdns/libdns"
 )
@@ -67,8 +68,16 @@ func (p *Provider) getDNSRecords(ctx context.Context, zoneInfo cfZone, rec libdn
 	qs := make(url.Values)
 	qs.Set("type", rr.Type)
 	qs.Set("name", libdns.AbsoluteName(rr.Name, zoneInfo.Name))
+
+	var unwrappedContent string
 	if matchContent {
-		qs.Set("content.exact", rr.Content)
+		if rr.Type == "TXT" {
+			unwrappedContent = unwrapContent(rr.Content)
+			// Use the contains (wildcard) search with unquoted content to return both quoted and unquoted content
+			qs.Set("content.contains", unwrappedContent)
+		} else {
+			qs.Set("content.exact", rr.Content)
+		}
 	}
 
 	reqURL := fmt.Sprintf("%s/zones/%s/dns_records?%s", baseURL, zoneInfo.ID, qs.Encode())
@@ -79,6 +88,26 @@ func (p *Provider) getDNSRecords(ctx context.Context, zoneInfo cfZone, rec libdn
 
 	var results []cfDNSRecord
 	_, err = p.doAPIRequest(req, &results)
+
+	// Since the TXT search used contains (wildcard), check for exact matches
+	if matchContent && rr.Type == "TXT" {
+		for i := 0; i < len(results); i++ {
+			// Prefer exact quoted content
+			if results[i].Content == rr.Content {
+				return []cfDNSRecord{results[i]}, nil
+			}
+		}
+
+		for i := 0; i < len(results); i++ {
+			// Using exact unquoted content is acceptable
+			if results[i].Content == unwrappedContent {
+				return []cfDNSRecord{results[i]}, nil
+			}
+		}
+
+		return []cfDNSRecord{}, nil
+	}
+
 	return results, err
 }
 
@@ -170,3 +199,17 @@ func (p *Provider) doAPIRequest(req *http.Request, result any) (cfResponse, erro
 }
 
 const baseURL = "https://api.cloudflare.com/client/v4"
+
+func unwrapContent(content string) string {
+	if strings.HasPrefix(content, `"`) && strings.HasSuffix(content, `"`) {
+		content = strings.TrimPrefix(strings.TrimSuffix(content, `"`), `"`)
+	}
+	return content
+}
+
+func wrapContent(content string) string {
+	if !strings.HasPrefix(content, `"`) && !strings.HasSuffix(content, `"`) {
+		content = fmt.Sprintf("%q", content)
+	}
+	return content
+}
